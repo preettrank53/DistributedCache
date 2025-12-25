@@ -1,4 +1,4 @@
-# DistriCache
+# DistributedCache
 
 A distributed caching system that helps store and retrieve data quickly across multiple servers.
 
