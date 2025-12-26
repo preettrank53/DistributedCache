@@ -73,6 +73,7 @@ db_manager: Optional[DatabaseManager] = None
 http_client: Optional[httpx.AsyncClient] = None
 chaos_monkey_task: Optional[asyncio.Task] = None
 chaos_monkey_enabled: bool = False
+partition_map: dict[str, set[str]] = {}  # Network partition blacklist: {source_port: {blocked_ports}}
 
 
 class ChaosMonkey:
@@ -140,6 +141,62 @@ class ChaosMonkey:
 
 # Initialize Chaos Monkey
 chaos_monkey = ChaosMonkey(min_nodes=3, interval_min=5, interval_max=8)
+
+
+def check_partition(source_node: str, target_node: str) -> bool:
+    """
+    Check if there's a network partition between two nodes.
+    
+    Args:
+        source_node: Source node URL (e.g., "http://127.0.0.1:8001")
+        target_node: Target node URL (e.g., "http://127.0.0.1:8002")
+        
+    Returns:
+        True if partition exists (nodes cannot communicate), False otherwise
+    """
+    source_port = source_node.split(":")[-1]
+    target_port = target_node.split(":")[-1]
+    
+    # Check both directions (bidirectional partition)
+    source_blocked = target_port in partition_map.get(source_port, set())
+    target_blocked = source_port in partition_map.get(target_port, set())
+    
+    return source_blocked or target_blocked
+
+
+async def replicate_with_partition_check(node_url: str, payload: dict, operation: str = "put") -> tuple[bool, str]:
+    """
+    Attempt to replicate data to a node with partition checking.
+    
+    Args:
+        node_url: Target node URL
+        payload: Data to replicate
+        operation: Operation type ("put" or "delete")
+        
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    # Check if partition exists
+    if check_partition("http://127.0.0.1:8000", node_url):
+        port = node_url.split(":")[-1]
+        return False, f"Network Unreachable (Partition) - Node {port}"
+    
+    try:
+        endpoint = f"{node_url}/{operation}"
+        if operation == "put":
+            response = await http_client.post(endpoint, json=payload)
+        elif operation == "delete":
+            key = payload.get("key")
+            response = await http_client.delete(f"{node_url}/delete/{key}")
+        else:
+            return False, f"Unknown operation: {operation}"
+            
+        if response.status_code == 200:
+            return True, "Success"
+        else:
+            return False, f"HTTP {response.status_code}"
+    except Exception as e:
+        return False, f"Connection Error: {str(e)}"
 
 
 async def init_components(db_path: str) -> None:
@@ -352,6 +409,7 @@ async def post_data(request: DataRequest) -> dict:
     # Invalidate/Update in cache nodes (Replication Factor = 2)
     target_nodes = hash_ring.get_nodes(request.key, count=2)
     successful_nodes = []
+    failed_replications = []
 
     put_payload = {
         "key": request.key,
@@ -359,21 +417,35 @@ async def post_data(request: DataRequest) -> dict:
         "ttl": request.ttl
     }
 
+    # Check if there's a partition between the replica nodes
+    partition_blocks_replication = False
+    if len(target_nodes) >= 2:
+        partition_blocks_replication = check_partition(target_nodes[0], target_nodes[1])
+
     for node_url in target_nodes:
-        try:
-            response = await http_client.post(f"{node_url}/put", json=put_payload)
-            if response.status_code == 200:
-                logger.info(f"Updated cache for key '{request.key}' on node {node_url}")
-                successful_nodes.append(node_url)
-        except Exception as e:
-            logger.warning(f"Failed to update cache on {node_url}: {e}")
+        # If partition exists between replicas, fail replication to second node
+        if partition_blocks_replication and node_url == target_nodes[1]:
+            port = node_url.split(":")[-1]
+            logger.warning(f"❌ Replication BLOCKED for key '{request.key}' to node {port}: Network partition exists")
+            failed_replications.append({"node": node_url, "port": port, "reason": "Network Unreachable (Partition)"})
+            continue
+            
+        success, message = await replicate_with_partition_check(node_url, put_payload, "put")
+        if success:
+            logger.info(f"✅ Replicated key '{request.key}' to node {node_url}")
+            successful_nodes.append(node_url)
+        else:
+            port = node_url.split(":")[-1]
+            logger.warning(f"❌ Replication FAILED for key '{request.key}' to node {port}: {message}")
+            failed_replications.append({"node": node_url, "port": port, "reason": message})
     
     return {
         "status": "success",
-        "message": f"Key '{request.key}' written to database and replicated to {len(successful_nodes)} nodes",
+        "message": f"Key '{request.key}' written to database and replicated to {len(successful_nodes)}/{len(target_nodes)} nodes",
         "key": request.key,
         "ttl": request.ttl,
-        "nodes": successful_nodes # Return list of nodes for visualization
+        "nodes": successful_nodes,
+        "failed_replications": failed_replications  # Return failed replications for visualization
     }
 
 
@@ -742,6 +814,131 @@ async def chaos_status() -> dict:
         "current_nodes": len(hash_ring.nodes) if hash_ring else 0,
         "min_nodes_threshold": chaos_monkey.min_nodes,
         "can_start": hash_ring and len(hash_ring.nodes) > chaos_monkey.min_nodes
+    }
+
+
+# ============================================================================
+# NETWORK PARTITION ENDPOINTS
+# ============================================================================
+
+@app.post("/partition/create")
+async def create_partition(source_port: str, target_port: str) -> dict:
+    """
+    Create a network partition between two nodes (bidirectional).
+    
+    Args:
+        source_port: Port of source node (e.g., "8001")
+        target_port: Port of target node (e.g., "8002")
+        
+    Returns:
+        dict: Status message
+    """
+    global partition_map
+    
+    # Initialize sets if needed
+    if source_port not in partition_map:
+        partition_map[source_port] = set()
+    if target_port not in partition_map:
+        partition_map[target_port] = set()
+    
+    # Create bidirectional partition
+    partition_map[source_port].add(target_port)
+    partition_map[target_port].add(source_port)
+    
+    logger.warning(f"⚡ NETWORK PARTITION CREATED: {source_port} <--X--> {target_port}")
+    
+    return {
+        "status": "success",
+        "message": f"Network partition created between nodes {source_port} and {target_port}",
+        "partition": f"{source_port}<--X-->{target_port}"
+    }
+
+
+@app.post("/partition/remove")
+async def remove_partition(source_port: str, target_port: str) -> dict:
+    """
+    Remove a network partition between two nodes.
+    
+    Args:
+        source_port: Port of source node (e.g., "8001")
+        target_port: Port of target node (e.g., "8002")
+        
+    Returns:
+        dict: Status message
+    """
+    global partition_map
+    
+    removed = False
+    
+    # Remove bidirectional partition
+    if source_port in partition_map and target_port in partition_map[source_port]:
+        partition_map[source_port].remove(target_port)
+        removed = True
+    
+    if target_port in partition_map and source_port in partition_map[target_port]:
+        partition_map[target_port].remove(source_port)
+        removed = True
+    
+    if removed:
+        logger.info(f"✅ NETWORK PARTITION REMOVED: {source_port} <--> {target_port}")
+        return {
+            "status": "success",
+            "message": f"Network partition removed between nodes {source_port} and {target_port}"
+        }
+    else:
+        return {
+            "status": "not_found",
+            "message": f"No partition exists between nodes {source_port} and {target_port}"
+        }
+
+
+@app.get("/partition/list")
+async def list_partitions() -> dict:
+    """
+    List all active network partitions.
+    
+    Returns:
+        dict: List of all partitions
+    """
+    partitions = []
+    seen = set()
+    
+    for source_port, blocked_ports in partition_map.items():
+        for target_port in blocked_ports:
+            # Avoid duplicates (since partitions are bidirectional)
+            pair = tuple(sorted([source_port, target_port]))
+            if pair not in seen:
+                seen.add(pair)
+                partitions.append({
+                    "source": source_port,
+                    "target": target_port,
+                    "bidirectional": True
+                })
+    
+    return {
+        "partitions": partitions,
+        "count": len(partitions)
+    }
+
+
+@app.post("/partition/clear")
+async def clear_all_partitions() -> dict:
+    """
+    Clear all network partitions.
+    
+    Returns:
+        dict: Status message
+    """
+    global partition_map
+    count = len(partition_map)
+    partition_map = {}
+    
+    logger.info(f"🔧 All network partitions cleared ({count} nodes affected)")
+    
+    return {
+        "status": "success",
+        "message": f"All network partitions cleared",
+        "affected_nodes": count
     }
 
 
