@@ -16,6 +16,7 @@ DistriCache takes this idea further by spreading the cache across multiple compu
 - **Smart Distribution**: Uses consistent hashing to decide which server stores which data
 - **Backup Storage**: All data is saved in a database as a backup
 - **Live Dashboard**: See what's happening in real-time with a web interface
+- **Network Partition Simulation**: Test what happens when servers can't talk to each other
 
 ## How It Works
 
@@ -33,6 +34,23 @@ The web dashboard shows:
 - **Metrics Chart**: View cache performance over time
 - **Live Expiry Tracker**: Watch data expire in real-time
 - **Log Terminal**: See what's happening in the system
+- **Network Partition Mode**: Click any two servers to simulate connection failures
+
+## Network Partitions
+
+A network partition is when two servers can't communicate with each other, like two phones with no signal.
+
+When you create a partition between two servers:
+- The system continues working (stays available)
+- Data can't be copied to both servers (loses consistency)
+- You can see which server didn't get the data (red X marker)
+- This demonstrates the CAP theorem in distributed systems
+
+To test:
+1. Click any server on the ring (turns yellow)
+2. Click another server (creates a red lightning bolt between them)
+3. Save some data and watch what happens
+4. Click the lightning bolt again to restore the connection
 
 ## Time-To-Live (TTL)
 
@@ -64,6 +82,16 @@ Session Management:
 - Fast session validation without database queries
 - Automatic logout after inactivity
 - Scales across multiple servers
+
+## What You'll Learn
+
+By exploring this project, you'll see:
+
+- How distributed systems handle data across multiple servers
+- What happens when servers can't communicate (CAP theorem)
+- How consistent hashing distributes data evenly
+- Why caches make applications faster
+- How data expiration keeps systems efficient
 
 ## Running Tests
 
