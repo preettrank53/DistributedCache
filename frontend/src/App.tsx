@@ -11,6 +11,7 @@ import { Server } from 'lucide-react';
 function App() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [partitions, setPartitions] = useState<Array<{ source: string; target: string }>>([]);
   
   // Enhanced Stats State
   const [globalStats, setGlobalStats] = useState({
@@ -152,6 +153,47 @@ function App() {
     }
   }, [addLog]);
 
+  // Fetch partition list
+  const fetchPartitions = useCallback(async () => {
+    try {
+      const response = await axios.get('http://127.0.0.1:8000/partition/list');
+      setPartitions(response.data.partitions || []);
+    } catch (error) {
+      console.error('Failed to fetch partitions:', error);
+    }
+  }, []);
+
+  // Toggle partition between two nodes
+  const handlePartitionToggle = useCallback(async (sourcePort: string, targetPort: string) => {
+    try {
+      // Check if partition already exists
+      const exists = partitions.some(
+        p => (p.source === sourcePort && p.target === targetPort) || 
+             (p.source === targetPort && p.target === sourcePort)
+      );
+
+      if (exists) {
+        // Remove partition
+        await axios.post('http://127.0.0.1:8000/partition/remove', null, {
+          params: { source_port: sourcePort, target_port: targetPort }
+        });
+        addLog(`⚡ Network partition REMOVED: ${sourcePort} <--> ${targetPort}`, 'success');
+      } else {
+        // Create partition
+        await axios.post('http://127.0.0.1:8000/partition/create', null, {
+          params: { source_port: sourcePort, target_port: targetPort }
+        });
+        addLog(`⚡ Network partition CREATED: ${sourcePort} <--X--> ${targetPort}`, 'error');
+      }
+
+      // Refresh partition list
+      await fetchPartitions();
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.detail || error.message || 'Failed to toggle partition';
+      addLog(`Partition Error: ${errorMsg}`, 'error');
+    }
+  }, [partitions, addLog, fetchPartitions]);
+
   const handleDataSaved = (nodes: string[]) => {
     setReplicationPath(nodes);
     // Clear the path after 3 seconds
@@ -162,14 +204,16 @@ function App() {
   useEffect(() => {
     fetchClusterMap();
     fetchStats();
+    fetchPartitions();
     addLog('Dashboard initialized. Connecting to Load Balancer...', 'info');
 
     const interval = setInterval(() => {
         fetchClusterMap();
         fetchStats();
+        fetchPartitions();
     }, 2000);
     return () => clearInterval(interval);
-  }, [fetchClusterMap, fetchStats, addLog]);
+  }, [fetchClusterMap, fetchStats, fetchPartitions, addLog]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 font-sans">
@@ -213,7 +257,12 @@ function App() {
         <div className="grid grid-cols-12 gap-4">
           {/* Ring Visualization - Large */}
           <div className="col-span-12 lg:col-span-8">
-            <RingVisualization nodes={nodes} replicationPath={replicationPath} />
+            <RingVisualization 
+              nodes={nodes} 
+              replicationPath={replicationPath} 
+              partitions={partitions}
+              onPartitionToggle={handlePartitionToggle}
+            />
           </div>
 
           {/* Metrics - Small */}
