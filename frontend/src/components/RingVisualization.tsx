@@ -191,48 +191,6 @@ const RingVisualization: React.FC<RingVisualizationProps> = ({
             });
           })()}
 
-          {/* Network Partition Lines (Lightning Bolts) */}
-          {partitions.map((partition, idx) => {
-            const sourceNode = physicalNodes.find(n => n.id.includes(partition.source));
-            const targetNode = physicalNodes.find(n => n.id.includes(partition.target));
-            
-            if (!sourceNode || !targetNode) return null;
-            
-            const start = getCoords(sourceNode.angle);
-            const end = getCoords(targetNode.angle);
-            const lightningPath = generateLightningPath(start.x, start.y, end.x, end.y);
-            
-            return (
-              <motion.g key={`partition-${idx}`}>
-                {/* Jagged red lightning bolt */}
-                <motion.path
-                  d={lightningPath}
-                  fill="none"
-                  stroke="#ef4444"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  initial={{ pathLength: 0, opacity: 0 }}
-                  animate={{ pathLength: 1, opacity: 0.9 }}
-                  transition={{ duration: 0.3 }}
-                />
-                {/* Glow effect */}
-                <motion.path
-                  d={lightningPath}
-                  fill="none"
-                  stroke="#ef4444"
-                  strokeWidth="6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  opacity="0.3"
-                  initial={{ pathLength: 0 }}
-                  animate={{ pathLength: 1 }}
-                  transition={{ duration: 0.3 }}
-                />
-              </motion.g>
-            );
-          })}
-
           {/* Clickable Invisible Lines Between Adjacent Nodes for Partition Toggle */}
           {onPartitionToggle && physicalNodes.map((node, i) => {
             const nextNode = physicalNodes[(i + 1) % physicalNodes.length];
@@ -336,6 +294,63 @@ const RingVisualization: React.FC<RingVisualizationProps> = ({
                   strokeWidth="0.5"
                   strokeDasharray="1,1"
                   opacity="0.3"
+                />
+              </motion.g>
+            );
+          })}
+
+          {/* Network Partition Lines (Lightning Bolts) - Drawn LAST to appear on top */}
+          {partitions.map((partition, idx) => {
+            const sourceNode = physicalNodes.find(n => n.id.includes(partition.source));
+            const targetNode = physicalNodes.find(n => n.id.includes(partition.target));
+            
+            if (!sourceNode || !targetNode) return null;
+            
+            const start = getCoords(sourceNode.angle);
+            const end = getCoords(targetNode.angle);
+            const lightningPath = generateLightningPath(start.x, start.y, end.x, end.y);
+            
+            return (
+              <motion.g 
+                key={`partition-${idx}`}
+                style={{ cursor: 'pointer' }}
+                onClick={() => onPartitionToggle && onPartitionToggle(partition.source, partition.target)}
+              >
+                {/* Glow effect (drawn first, so it's behind the main line) */}
+                <motion.path
+                  d={lightningPath}
+                  fill="none"
+                  stroke="#ef4444"
+                  strokeWidth="8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity="0.4"
+                  filter="blur(2px)"
+                  initial={{ pathLength: 0 }}
+                  animate={{ pathLength: 1 }}
+                  transition={{ duration: 0.3 }}
+                />
+                {/* Main jagged red lightning bolt (on top) */}
+                <motion.path
+                  d={lightningPath}
+                  fill="none"
+                  stroke="#ef4444"
+                  strokeWidth="4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  initial={{ pathLength: 0, opacity: 0 }}
+                  animate={{ pathLength: 1, opacity: 1 }}
+                  transition={{ duration: 0.3 }}
+                  style={{ filter: 'drop-shadow(0 0 4px rgba(239, 68, 68, 0.8))' }}
+                  className="hover:brightness-125 transition-all"
+                />
+                {/* Invisible clickable area for easier clicking */}
+                <path
+                  d={lightningPath}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth="20"
+                  strokeLinecap="round"
                 />
               </motion.g>
             );
