@@ -202,8 +202,8 @@ async def replicate_with_partition_check(node_url: str, payload: dict, operation
 async def init_components(db_path: str) -> None:
     """Initialize components"""
     global hash_ring, db_manager, http_client
-    # Reduced virtual nodes for cleaner visualization (was 150)
-    hash_ring = ConsistentHashRing(num_virtual_nodes=10)
+    # Low virtual nodes (5) creates realistic load imbalance for demo visibility
+    hash_ring = ConsistentHashRing(num_virtual_nodes=5)
     db_manager = DatabaseManager(db_path=db_path)
     http_client = httpx.AsyncClient(timeout=10.0)
 
