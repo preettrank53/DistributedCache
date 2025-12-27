@@ -14,13 +14,13 @@ class ConsistentHashRing:
     Ensures minimal redistribution when nodes are added/removed.
     """
     
-    def __init__(self, num_virtual_nodes: int = 150):
+    def __init__(self, num_virtual_nodes: int = 5):
         """
         Initialize the Consistent Hash Ring.
         
         Args:
             num_virtual_nodes: Number of virtual nodes per physical node
-                               (higher value = better distribution)
+                               (lower value = more visible variance, more realistic demo)
         """
         self.num_virtual_nodes = num_virtual_nodes
         self.ring: dict[int, str] = {}  # hash -> node_url
